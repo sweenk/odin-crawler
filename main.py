@@ -1,28 +1,28 @@
-import asyncio, os
-from fastapi import FastAPI, HTTPException
-from fastapi import FastAPI, HTTPException
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.templating import Jinja2Templates
-from fastapi.responses import RedirectResponse
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi import Depends, Security
-
-from pydantic import BaseModel, HttpUrl, Field
-from typing import Optional, List, Dict, Any, Union
-import psutil
+import asyncio
+import logging
+import math
+import os
 import time
 import uuid
-import math
-import logging
-from enum import Enum
 from dataclasses import dataclass
-from crawl4ai import AsyncWebCrawler, CrawlResult, CacheMode
+from enum import Enum
+from typing import Any, Dict, List, Optional, Union
+
+import psutil
+from fastapi import Depends, FastAPI, HTTPException, Security
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field, HttpUrl
+
+from crawl4ai import AsyncWebCrawler, CacheMode, CrawlResult
 from crawl4ai.config import MIN_WORD_THRESHOLD
 from crawl4ai.extraction_strategy import (
-    LLMExtractionStrategy,
     CosineStrategy,
     JsonCssExtractionStrategy,
+    LLMExtractionStrategy,
 )
 
 __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
@@ -363,7 +363,9 @@ CRAWL4AI_API_TOKEN = os.getenv("CRAWL4AI_API_TOKEN")
 
 
 async def verify_token(credentials: HTTPAuthorizationCredentials = Security(security)):
+    print(f"CRAWL4AI_API_TOKEN: {CRAWL4AI_API_TOKEN}")
     if not CRAWL4AI_API_TOKEN:
+        print("CRAWL4AI_API_TOKEN is not set")
         return credentials  # No token verification if CRAWL4AI_API_TOKEN is not set
     if credentials.credentials != CRAWL4AI_API_TOKEN:
         raise HTTPException(status_code=401, detail="Invalid token")
@@ -403,10 +405,16 @@ def read_root():
     return {"message": "Crawl4AI API service is running"}
 
 
-@app.post("/crawl", dependencies=[secure_endpoint()] if CRAWL4AI_API_TOKEN else [])
+@app.post("/crawl")
 async def crawl(request: CrawlRequest) -> Dict[str, str]:
-    task_id = await crawler_service.submit_task(request)
-    return {"task_id": task_id}
+    logger.info(f"Received crawl request: {request}")
+    try:
+        task_id = await crawler_service.submit_task(request)
+        logger.info(f"Created task with ID: {task_id}")
+        return {"task_id": task_id}
+    except Exception as e:
+        logger.error(f"Error processing crawl request: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get(
@@ -518,6 +526,27 @@ async def health_check():
         "memory_usage": memory.percent,
         "cpu_usage": psutil.cpu_percent(),
     }
+
+
+@app.get("/debug-security")
+async def debug_security():
+    return {
+        "api_token_set": bool(CRAWL4AI_API_TOKEN),
+        "security_enabled": bool(secure_endpoint()),
+    }
+
+
+@app.get("/debug-playwright")
+async def debug_playwright():
+    from playwright.async_api import async_playwright
+
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch()
+            await browser.close()
+            return {"status": "ok", "message": "Playwright is working correctly"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 if __name__ == "__main__":
